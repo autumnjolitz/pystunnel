@@ -42,7 +42,7 @@ if __version__ is None:
 
 setup(name='pystunnel', version=__version__,
       author='Ben Jolitz',
-      description='Template for creating python modules',
+      description='Limited Python stunnel implementation',
       long_description=long_description,
       license='BSD',
       packages=find_packages(exclude=['contrib', 'docs', 'tests*']),

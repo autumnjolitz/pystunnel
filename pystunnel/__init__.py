@@ -154,10 +154,11 @@ class RemoteTLSConnection(Connection):
 
 class ProxiedClientConnection(Connection):
 
-    def __init__(self, server):
+    def __init__(self, server, ssl_hostname=None):
         self.server_ref = weakref.ref(server, lambda ref: self._on_server_lost())
         self.destination_tunnel = RemoteTLSConnection(parent_connection=self, loop=server.loop)
         self._destination_ready = False
+        self.ssl_hostname = ssl_hostname
         super().__init__()
 
     def _on_child_ready(self, send_queue_length=None):
@@ -175,7 +176,7 @@ class ProxiedClientConnection(Connection):
         asyncio.async(server.loop.create_connection(
             lambda: self.destination_tunnel,
             server.destination_host, server.destination_port,
-            ssl=True))
+            ssl=True, server_hostname=self.ssl_hostname))
 
     def _handle_data(self, data):
         self.destination_tunnel.write(data)
@@ -186,15 +187,18 @@ class ProxiedClientConnection(Connection):
 
 
 class Server:
-    def __init__(self, port, destination_port, *, loop=None, destination_host='localhost'):
+    def __init__(self, port, destination_port, *, loop=None, destination_host='localhost',
+                 override_ssl_hostname=None):
         assert isinstance(port, int) and port > 1, \
             '{} is not a valid port to mirror on'.format(port)
         assert isinstance(destination_port, int) and destination_port > 1, \
             '{} is not a valid destination port'.format(destination_port)
+        self.override_ssl_hostname = override_ssl_hostname
         self.loop = loop
         self.port = port
         self.destination_port = destination_port
         self.protocol_factory = ProxiedClientConnection
+
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(
             socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
@@ -208,5 +212,5 @@ class Server:
         self.loop = self.loop or asyncio.get_event_loop()
         server = self.loop.create_server(
             lambda: self.protocol_factory(
-                self), sock=self.server_socket)
+                self, self.override_ssl_hostname), sock=self.server_socket)
         return server

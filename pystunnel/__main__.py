@@ -17,10 +17,16 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--debug', action='store_true', default=False)
+    parser.add_argument('--override-ssl-hostname',
+                        type=str, default=None,
+                        help='Override the server_name sent in for TLS validation. '
+                             'Required for localhost.')
     parser.add_argument('local_port', type=int)
     parser.add_argument('remote_port', type=int)
-    parser.add_argument('remote_host', type=str, default='localhost')
+    parser.add_argument('remote_host', type=str, default='localhost', nargs='?')
     args = parser.parse_args()
+    if args.remote_host in ('::1', 'localhost', '127.0.0.1') and not args.override_ssl_hostname:
+        raise SystemExit('--override-ssl-hostname must be specified for localhost remotes.')
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter('[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s'))
     handler.setLevel(logging.DEBUG)
