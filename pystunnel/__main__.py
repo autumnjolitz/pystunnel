@@ -5,9 +5,12 @@ from . import Server
 from . import logger
 
 
-def main(local_port, destination_port, *, loop=None, destination_host=None):
+def main(local_port, destination_port, *, loop=None,
+         destination_host=None, override_ssl_hostname=None):
     loop = loop or asyncio.get_event_loop()
-    server = Server(local_port, destination_port, loop=loop, destination_host=destination_host)
+    server = Server(
+        local_port, destination_port, loop=loop, destination_host=destination_host,
+        override_ssl_hostname=override_ssl_hostname)
     server_future = server.create_server()
     asyncio.async(server_future)
     loop.run_forever()
@@ -34,4 +37,5 @@ if __name__ == '__main__':
     logger.setLevel(logging.INFO)
     if args.debug:
         logger.setLevel(logging.DEBUG)
-    main(args.local_port, args.remote_port, destination_host=args.remote_host)
+    main(args.local_port, args.remote_port, destination_host=args.remote_host,
+         override_ssl_hostname=args.override_ssl_hostname)
