@@ -174,7 +174,7 @@ class ProxiedClientConnection(Connection):
 
         super().connection_made(transport)
         self.logger.debug('Contacting {}:{} (server_hostname override: {})'.format(
-            server.destination_host, server.destination_tunnel, self.ssl_hostname))
+            server.destination_host, server.destination_port, self.ssl_hostname))
         asyncio.async(server.loop.create_connection(
             lambda: self.destination_tunnel,
             server.destination_host, server.destination_port,
