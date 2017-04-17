@@ -28,14 +28,24 @@ if __name__ == '__main__':
     parser.add_argument('remote_port', type=int)
     parser.add_argument('remote_host', type=str, default='localhost', nargs='?')
     args = parser.parse_args()
-    if args.remote_host in ('::1', 'localhost', '127.0.0.1') and not args.override_ssl_hostname:
-        raise SystemExit('--override-ssl-hostname must be specified for localhost remotes.')
+
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter('[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s'))
     handler.setLevel(logging.DEBUG)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
+
     if args.debug:
         logger.setLevel(logging.DEBUG)
+
+    if args.remote_host in ('::1', 'localhost', '127.0.0.1'):
+        if args.override_ssl_hostname is None:
+            raise SystemExit('--override-ssl-hostname must be specified for localhost remotes.')
+        if not args.override_ssl_hostname:
+            logger.warning(
+                'Override SSL hostname is set to an empty string. '
+                'This means ZERO TLS verification will happen. As you\'re on localhost, '
+                'it\'s probably not an issue. Still, consider yourself warned.')
+
     main(args.local_port, args.remote_port, destination_host=args.remote_host,
          override_ssl_hostname=args.override_ssl_hostname)
