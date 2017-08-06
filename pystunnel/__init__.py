@@ -113,11 +113,11 @@ class Connection(asyncio.Protocol):
             self.logger.debug('Connection closed before establishing peername')
             return
 
-        if self.transport._closing:
+        if self.transport.is_closing():
             self.logger.debug('This connection is marked as `closing`')
             return
 
-        if self.transport._buffer:
+        if getattr(self.transport, '_buffer', None):
             loop = self.loop or asyncio.get_event_loop()
             self.logger.debug(
                 'This connection is registered as needing to send data. '
@@ -125,7 +125,7 @@ class Connection(asyncio.Protocol):
             loop.call_later(0.1, self.shutdown)
             return
 
-        if isinstance(self.transport._sock, ssl.SSLSocket):
+        if hasattr(self.transport, '_sock') and isinstance(self.transport._sock, ssl.SSLSocket):
             try:
                 self.transport._sock.shutdown(socket.SHUT_RDWR)
                 self.transport._sock.close()
@@ -152,19 +152,34 @@ class RemoteTLSConnection(Connection):
         super().__init__(*args, **kwargs)
 
 
-class ProxiedClientConnection(Connection):
+class RemoteUnencryptedConnection(Connection):
+    pass
 
-    def __init__(self, server, ssl_hostname=None):
+
+class ProxiedConnection(Connection):
+    def __init__(self, server):
         self.server_ref = weakref.ref(server, lambda ref: self._on_server_lost())
-        self.destination_tunnel = RemoteTLSConnection(parent_connection=self, loop=server.loop)
         self._destination_ready = False
-        self.ssl_hostname = ssl_hostname
+        self.destination_tunnel = RemoteTLSConnection(parent_connection=self, loop=server.loop)
         super().__init__()
 
     def _on_child_ready(self, send_queue_length=None):
         self._destination_ready = True
         if send_queue_length:
             self.destination_tunnel.write(b'')
+
+    def _handle_data(self, data):
+        self.destination_tunnel.write(data)
+
+    def _on_server_lost(self):
+        self.logger.debug('Server has been deallocated?')
+        self.shutdown()
+
+
+class ProxiedTLSClientConnection(ProxiedConnection):
+    def __init__(self, server, ssl_hostname=None):
+        self.ssl_hostname = ssl_hostname
+        super().__init__(server)
 
     def connection_made(self, transport):
         server = self.server_ref()
@@ -180,39 +195,72 @@ class ProxiedClientConnection(Connection):
             server.destination_host, server.destination_port,
             ssl=True, server_hostname=self.ssl_hostname))
 
-    def _handle_data(self, data):
-        self.destination_tunnel.write(data)
 
-    def _on_server_lost(self):
-        self.logger.debug('Server has been deallocated?')
-        self.shutdown()
+class ProxiedClientConnection(ProxiedConnection):
+    def connection_made(self, transport):
+        server = self.server_ref()
+        if server is None:
+            self.logger.critical('Server inaccessible!')
+            raise ValueError
+
+        super().connection_made(transport)
+        self.logger.debug('Contacting {}:{}'.format(
+            server.destination_host, server.destination_port))
+        asyncio.async(server.loop.create_connection(
+            lambda: self.destination_tunnel,
+            server.destination_host, server.destination_port))
 
 
 class Server:
-    def __init__(self, port, destination_port, *, loop=None, destination_host='localhost',
-                 override_ssl_hostname=None):
+    def __init__(self, port, destination_port, *, loop=None, destination_host='localhost'):
         assert isinstance(port, int) and port > 1, \
             '{} is not a valid port to mirror on'.format(port)
         assert isinstance(destination_port, int) and destination_port > 1, \
             '{} is not a valid destination port'.format(destination_port)
-        self.override_ssl_hostname = override_ssl_hostname
         self.loop = loop
         self.port = port
         self.destination_port = destination_port
-        self.protocol_factory = ProxiedClientConnection
-
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.setsockopt(
-            socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
-        self.server_socket.bind(('localhost', port))
         self.destination_host = destination_host
-        _, self.port = self.server_socket.getsockname()
+        self.server_options = {}
 
     def create_server(self, loop=None):
         if loop is not None:
             self.loop = loop
         self.loop = self.loop or asyncio.get_event_loop()
         server = self.loop.create_server(
-            lambda: self.protocol_factory(
-                self, self.override_ssl_hostname), sock=self.server_socket)
+            self.protocol_factory, sock=self.server_socket,
+            **self.server_options)
         return server
+
+
+class StripServer(Server):
+    def __init__(self, port, destination_port, *, loop=None, destination_host='localhost',
+                 override_ssl_hostname=None):
+
+        self.override_ssl_hostname = override_ssl_hostname
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(
+            socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
+        self.server_socket.bind(('localhost', port))
+        _, self.port = self.server_socket.getsockname()
+        super().__init__(port, destination_port, loop=loop, destination_host=destination_host)
+        self.protocol_factory = lambda: ProxiedTLSClientConnection(self, self.override_ssl_hostname)
+
+
+class WrapServer(Server):
+    def __init__(self, port, destination_port, cert_path, key_path, *, loop=None,
+                 host=None, destination_host=None):
+        if host is None:
+            host = 'localhost'
+        if destination_host is None:
+            destination_host = 'localhost'
+        sc = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        sc.load_cert_chain(cert_path, key_path)
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(
+            socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
+        self.server_socket.bind((host, port))
+
+        self.protocol_factory = lambda: ProxiedClientConnection(self)
+        super().__init__(port, destination_port, loop=loop, destination_host=destination_host)
+        self.server_options['ssl'] = sc
