@@ -41,7 +41,7 @@ if __version__ is None:
     raise IOError('about.py in project lacks __version__!')
 
 setup(name='pystunnel', version=__version__,
-      author='Ben Jolitz',
+      author='Autumn Jolitz',
       description='Limited Python stunnel implementation',
       long_description=long_description,
       license='BSD',
@@ -49,7 +49,7 @@ setup(name='pystunnel', version=__version__,
       include_package_data=True,
       install_requires=install_requirements,
       keywords=[],
-      url="https://github.com/benjolitz/pystunnel",
+      url="https://github.com/autumnjolitz/pystunnel",
       classifiers=[
         "Development Status :: 3 - Alpha",
         "Topic :: Utilities",
